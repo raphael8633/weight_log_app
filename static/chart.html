@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>體重記錄</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+      body {
+        font-family: sans-serif;
+        padding: 1em;
+        max-width: 600px;
+        margin: auto;
+      }
+      input,
+      select,
+      button {
+        font-size: 1em;
+        padding: 0.5em;
+        margin: 0.5em 0;
+        width: 100%;
+      }
+      canvas {
+        margin-top: 2em;
+      }
+      .summary {
+        margin-top: 1em;
+        padding: 0.5em;
+        background: #f2f2f2;
+        border-radius: 5px;
+        font-size: 0.9em;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>體重記錄表</h2>
+
+    <label for="weight">輸入體重 (kg):</label>
+    <input type="number" step="0.1" id="weight" placeholder="例如: 67.5" />
+
+    <label for="date">選擇日期（可不填，預設今天）:</label>
+    <input type="date" id="date" />
+
+    <button onclick="submitWeight()">上傳體重資料</button>
+    <div id="status" style="color: green"></div>
+
+    <label for="range">選擇顯示範圍:</label>
+    <select id="range" onchange="reloadChart()">
+      <option value="30" selected>過去 30 天</option>
+      <option value="14">過去 14 天</option>
+      <option value="7">過去 7 天</option>
+      <option value="all">全部範圍</option>
+    </select>
+
+    <div id="summary" class="summary"></div>
+
+    <canvas id="weightChart"></canvas>
+
+    <script>
+      let chart;
+
+      async function fetchData(days) {
+        if (days === "all") {
+          const res = await fetch(`/api/weights/all`);
+          return await res.json();
+        } else {
+          const res = await fetch(`/api/weights?days=${days}`);
+          return await res.json();
+        }
+      }
+
+      function movingAverage(data, period) {
+        const result = [];
+        for (let i = 0; i < data.length; i++) {
+          if (i < period - 1) {
+            result.push(null);
+          } else {
+            let sum = 0;
+            let count = 0;
+            for (let j = 0; j < period; j++) {
+              if (data[i - j] !== null) {
+                sum += data[i - j];
+                count++;
+              }
+            }
+            result.push(count > 0 ? (sum / count).toFixed(2) : null);
+          }
+        }
+        return result;
+      }
+
+      function updateSummary(weights, ma7, ma14, ma30) {
+        const latestWeight = weights.filter((w) => w !== null).at(-1);
+        const latest7 = ma7.filter((w) => w !== null).at(-1);
+        const latest14 = ma14.filter((w) => w !== null).at(-1);
+        const latest30 = ma30.filter((w) => w !== null).at(-1);
+
+        document.getElementById("summary").innerHTML = `
+        <strong>當前體重：</strong> ${latestWeight ?? "—"} kg<br>
+        <strong>7日平均：</strong> ${latest7 ?? "—"} kg<br>
+        <strong>14日平均：</strong> ${latest14 ?? "—"} kg<br>
+        <strong>30日平均：</strong> ${latest30 ?? "—"} kg
+      `;
+      }
+
+      function drawChart(data) {
+        const labels = data.map((d) => d.date);
+        const weights = data.map((d) => d.weight);
+        const ma7 = movingAverage(weights, 7);
+        const ma14 = movingAverage(weights, 14);
+        const ma30 = movingAverage(weights, 30);
+
+        updateSummary(weights, ma7, ma14, ma30);
+
+        if (chart) chart.destroy();
+        const ctx = document.getElementById("weightChart").getContext("2d");
+
+        chart = new Chart(ctx, {
+          type: "line",
+          data: {
+            labels: labels,
+            datasets: [
+              {
+                label: "體重",
+                data: weights,
+                spanGaps: true,
+                borderWidth: 2,
+              },
+              {
+                label: "7日均線",
+                data: ma7,
+                spanGaps: true,
+                borderDash: [5, 5],
+                borderWidth: 1,
+              },
+              {
+                label: "14日均線",
+                data: ma14,
+                spanGaps: true,
+                borderDash: [5, 5],
+                borderWidth: 1,
+              },
+              {
+                label: "30日均線",
+                data: ma30,
+                spanGaps: true,
+                borderDash: [5, 5],
+                borderWidth: 1,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            scales: {
+              y: {beginAtZero: false},
+            },
+          },
+        });
+      }
+
+      async function submitWeight() {
+        const weight = document.getElementById("weight").value;
+        const date = document.getElementById("date").value;
+
+        if (!weight) return alert("請輸入體重");
+        const body = {weight: parseFloat(weight)};
+        if (date) {
+          body.date = date;
+        }
+
+        const res = await fetch("/api/weights", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(body),
+        });
+        const result = await res.json();
+        document.getElementById("status").innerText = result.message || "OK";
+        setTimeout(() => reloadChart(), 1000);
+      }
+
+      async function reloadChart() {
+        const days = document.getElementById("range").value;
+        const data = await fetchData(days);
+        drawChart(data);
+      }
+
+      // 預設啟動時顯示 30 天
+      reloadChart();
+    </script>
+  </body>
+</html>
